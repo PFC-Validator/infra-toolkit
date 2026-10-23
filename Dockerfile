@@ -38,8 +38,8 @@ RUN LIBDIR=/lib; \
 
 # Build minimal busybox
 WORKDIR /
-# busybox v1.34.1 stable
-RUN git clone -b 1_34_1 --single-branch https://git.busybox.net/busybox
+# busybox v1.36.1 (GitHub mirror: git.busybox.net is flaky from build envs; mirror lags upstream - bump again when it catches up)
+RUN git clone -b 1_36_1 --single-branch --depth 1 https://github.com/mirror/busybox
 WORKDIR /busybox
 ADD busybox.min.config .config
 RUN if [ "${TARGETARCH}" = "arm64" ] && [ "${BUILDARCH}" != "arm64" ]; then \
@@ -47,17 +47,18 @@ RUN if [ "${TARGETARCH}" = "arm64" ] && [ "${BUILDARCH}" != "arm64" ]; then \
     elif [ "${TARGETARCH}" = "amd64" ] && [ "${BUILDARCH}" != "amd64" ]; then \
       export CC=x86_64-linux-musl-gcc; \
     fi; \
+    yes "" | make oldconfig; \
     make
 
 # Static jq
 WORKDIR /
-RUN git clone --recursive -b jq-1.6 --single-branch https://github.com/stedolan/jq.git
+RUN git clone --recursive -b jq-1.8.2 --single-branch https://github.com/jqlang/jq.git
 WORKDIR /jq
 RUN autoreconf -fi;\
   ./configure --with-oniguruma=builtin;\
   make LDFLAGS=-all-static
 
-FROM boxboat/config-merge:0.2.1 as config-merge
+FROM boxboat/config-merge:0.2.3 as config-merge
 
 FROM alpine:3
 
