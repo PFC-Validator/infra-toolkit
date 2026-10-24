@@ -63,6 +63,7 @@ FROM boxboat/config-merge:0.2.3 as config-merge
 FROM alpine:3
 
 RUN apk add --no-cache \
+  aria2 \
   curl \
   lz4 \
   nano \
@@ -70,9 +71,9 @@ RUN apk add --no-cache \
   procps \
   rsync \
   tar \
+  unzip \
   wget \
-  zstd-dev \
-  aria2
+  zstd
 
 # Install busybox
 COPY --from=build-env /busybox/busybox /busybox/busybox
