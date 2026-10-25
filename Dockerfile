@@ -58,6 +58,22 @@ RUN autoreconf -fi;\
   ./configure --with-oniguruma=builtin;\
   make LDFLAGS=-all-static
 
+# Build the Go helper binaries from source with a current toolchain.
+# The prebuilt upstream binaries carried known Go stdlib CVEs: boxboat's
+# envsubst (a8m/envsubst, built with go1.18) and the dasel v1.26.0 release
+# binary (go1.21). Both are trivial to build; pinned source tags only.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS go-tools
+RUN apk add --no-cache git
+ARG TARGETARCH
+RUN git clone --depth 1 -b v1.4.3 https://github.com/a8m/envsubst /src/envsubst && \
+    cd /src/envsubst && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -o /usr/local/bin/envsubst ./cmd/envsubst && \
+    git clone --depth 1 -b v1.26.0 https://github.com/TomWright/dasel /src/dasel && \
+    cd /src/dasel && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -o /usr/local/bin/dasel ./cmd/dasel
+
+# config-merge ships as JS + wrapper scripts; only the directory payload is
+# used from here (envsubst now comes from go-tools above).
 FROM boxboat/config-merge:0.2.3 as config-merge
 
 FROM alpine:3
@@ -84,18 +100,7 @@ COPY --from=build-env /jq/jq /usr/local/bin/jq
 # Add config-merge
 COPY --from=config-merge /usr/local/config-merge /usr/local/config-merge
 COPY --from=config-merge /usr/local/bin/config-merge /usr/local/bin/config-merge
-COPY --from=config-merge /usr/local/bin/envsubst /usr/local/bin/envsubst
+COPY --from=go-tools /usr/local/bin/envsubst /usr/local/bin/envsubst
 
-# Add dasel.
-# The dasel repository does not post checksums of the published binaries,
-# so use hardcoded binaries in order to avoid potential supply chain attacks.
-# Note, dasel does publish docker images, but only for amd64,
-# so we cannot copy the binary out like we do for config-merge.
-RUN if [ "$(uname -m)" = "aarch64" ]; then \
-      ARCH=arm64 DASELSUM="8e1f95b5f361f68ed8376d5a9593ae4249e28153a05b26f1f99f9466efeac5c9  /usr/local/bin/dasel"; \
-    else \
-      ARCH=amd64 DASELSUM="3efd202a525c43c027bddc770861dd637ec8389a4ca3ef2951da7165350219ed  /usr/local/bin/dasel"; \
-    fi; \
-    wget -O /usr/local/bin/dasel https://github.com/TomWright/dasel/releases/download/v1.26.0/dasel_linux_$ARCH && \
-      sha256sum -c <(echo "$DASELSUM") && \
-      chmod +x /usr/local/bin/dasel
+# Add dasel (built from source in go-tools).
+COPY --from=go-tools /usr/local/bin/dasel /usr/local/bin/dasel
