@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM alpine:3 AS build-env
+FROM --platform=$BUILDPLATFORM alpine:3.24 AS build-env
 
 RUN apk add --update --no-cache \
   automake \
@@ -58,27 +58,19 @@ RUN autoreconf -fi;\
   ./configure --with-oniguruma=builtin;\
   make LDFLAGS=-all-static
 
-# Build the Go helper binaries from source with a current toolchain.
-# The prebuilt upstream binaries carried known Go stdlib CVEs: boxboat's
-# envsubst (a8m/envsubst, built with go1.18) and the dasel v1.26.0 release
-# binary (go1.21). Both are trivial to build; pinned source tags only.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS go-tools
-RUN apk add --no-cache git
+# Build the existing helper CLIs against the dependencies locked in tools/go.mod.
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS go-tools
+WORKDIR /src
+COPY tools/go.mod tools/go.sum ./
+RUN go mod download
 ARG TARGETARCH
-RUN git clone --depth 1 -b v1.4.3 https://github.com/a8m/envsubst /src/envsubst && \
-    cd /src/envsubst && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -o /usr/local/bin/envsubst ./cmd/envsubst && \
-    git clone --depth 1 -b v1.26.0 https://github.com/TomWright/dasel /src/dasel && \
-    cd /src/dasel && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -o /usr/local/bin/dasel ./cmd/dasel
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -mod=readonly -o /usr/local/bin/ tool
 
-# config-merge ships as JS + wrapper scripts; only the directory payload is
-# used from here (envsubst now comes from go-tools above).
-FROM boxboat/config-merge:0.2.3 as config-merge
+FROM boxboat/config-merge:0.2.3 AS config-merge
 
-FROM alpine:3
+FROM alpine:3.24
 
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache && apk add --no-cache \
   aria2 \
   curl \
   lz4 \
@@ -97,8 +89,10 @@ COPY --from=build-env /busybox/busybox /busybox/busybox
 # Install jq
 COPY --from=build-env /jq/jq /usr/local/bin/jq
 
-# Add config-merge
-COPY --from=config-merge /usr/local/config-merge /usr/local/config-merge
+# Keep the upstream scripts and install their patched dependencies from the lockfile.
+COPY config-merge/package*.json /usr/local/config-merge/
+RUN npm ci --prefix /usr/local/config-merge --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
+COPY --from=config-merge /usr/local/config-merge/*.js /usr/local/config-merge/*.sh /usr/local/config-merge/
 COPY --from=config-merge /usr/local/bin/config-merge /usr/local/bin/config-merge
 COPY --from=go-tools /usr/local/bin/envsubst /usr/local/bin/envsubst
 
